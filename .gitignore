@@ -1,0 +1,13 @@
+/target/
+Cargo.lock
+**/*.rs.bk
+*.pdb
+dist/
+*.so
+*.dylib
+*.whl
+__pycache__/
+.venv/
+.DS_Store
+data/*.fps
+data/*.idx
