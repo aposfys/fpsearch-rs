@@ -10,6 +10,11 @@
 
 use std::cmp::Ordering;
 
+pub mod fps;
+pub mod index;
+
+pub use index::{Index, IndexBuilder, IndexError, Metric, SearchStats};
+
 /// Errors that must not be silently absorbed into a similarity score.
 #[derive(Debug, PartialEq, Eq)]
 pub enum FpError {
