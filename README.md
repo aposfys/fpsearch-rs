@@ -59,5 +59,6 @@ benchmarks/       measured results, with hardware and method
 
 ### Design notes
 
+- [Analysis: what was done, and why it was done that way](ANALYSIS.md)
 - [Measured results, the baseline comparison and what the parallel scan is worth](benchmarks/RESULTS.md)
 - [Packaging plan and the traps this implementation is built to avoid](docs/DESIGN.md)
