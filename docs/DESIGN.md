@@ -71,3 +71,18 @@ the kernel does 32 `and` + `count_ones` pairs on it, far too little arithmetic t
 load. That is why 10 threads buy 2.4–4.3× rather than 10×, and it is the thing to attack
 next — a narrower fold, or a compressed layout that moves fewer bytes per candidate, would
 help where more cores will not.
+
+## Layout
+
+```
+src/lib.rs        the kernel: bitset intersection, Tanimoto, the popcount bound
+src/index.rs      memory-mapped, popcount-sorted store; serial and parallel search
+src/fps.rs        the `id<TAB>hex` interchange format
+src/main.rs       CLI: build, query, bench, info
+tools/            ChEMBL -> fingerprints, and the RDKit baseline
+benches/          criterion kernel benchmarks
+benchmarks/       measured results, with hardware and method
+```
+
+Additional CLI subcommands: `bench chembl.idx --queries 300 --threshold 0.95`
+runs the timing harness, and `info chembl.idx` reports index geometry.
