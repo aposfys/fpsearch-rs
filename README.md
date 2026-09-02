@@ -50,9 +50,28 @@ fingerprints. That was never measured. These timings are bandwidth-bound with a
 could not be resident, and would be governed by storage rather than by anything
 here. The claim is withdrawn rather than restated.
 
-Fast Tanimoto search is not a new idea — `chemfp` has done it well for over a
-decade. This repo claims no new algorithm, only a correct, well-tested
-implementation with published numbers.
+### The baseline this is not measured against
+
+Fast Tanimoto search is not a new idea. The popcount bound used here is the **BitBound**
+algorithm, and `chemfp` (Dalke, *Journal of Cheminformatics* 2019) is its reference
+implementation — published, in part, expressly to be "an effective baseline to benchmark new
+similarity search implementations." This repository claims no new algorithm.
+
+Two things follow, and both cut against the numbers above.
+
+**The 7× figure is against the wrong baseline.** RDKit's `BulkTanimotoSimilarity` is a
+convenience function, not a search engine. The comparison a reader should want is against
+chemfp, which reports a k=1000 nearest-neighbour search over 1.8M 2048-bit ChEMBL Morgan
+fingerprints at 27 ms/query, and uses AVX2 popcount. That comparison has not been run here,
+so no claim is made about how this implementation ranks.
+
+**Dalke's analysis contradicts the framing in "How it goes fast".** That section leads with
+word-parallel popcount. chemfp's central finding is that nearly all earlier work wrongly
+assumed intersection popcount was the limiting factor, when uncompressed search on modern
+hardware is **memory-bandwidth limited** — AVX2 search gains 10% from prefetching, and
+popcount evaluation is far cheaper than a random main-memory fetch. The withdrawn
+billion-fingerprint section below reaches the same conclusion independently ("these timings
+are bandwidth-bound"), which is the reading to trust.
 
 ### More
 
