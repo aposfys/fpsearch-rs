@@ -1,6 +1,7 @@
 # Analysis
 
-What was built, why it was built that way, and why one headline claim was withdrawn.
+What was built, why it was built that way, what it is not compared against, and why one
+headline claim was withdrawn.
 
 ## What existed and what was added
 
@@ -43,11 +44,32 @@ thread counts. A faster structure that returns different rows is not a faster st
 
 ChEMBL 36, **2,854,800 molecules**, ECFP4 at 2048 bits, 730 MB index.
 
-- Top-10 at Tanimoto ≥ 0.95: **~2.6 ms**, 89.1% of the database skipped.
-- The kernel alone, on an identical exhaustive scan, is **~7× faster than RDKit's
-  `BulkTanimotoSimilarity`** — measured back to back, single-threaded, normalised per
-  million fingerprints.
-- 10 threads buy 2.0–2.7×, not 10×.
+- Top-10 at Tanimoto ≥ 0.95 takes **about 2.6 ms** on 10 threads and 5.5 ms on one, with
+  89.1% of the database skipped.
+- Most of that is the bound. One thread scans the whole index in 71 ms and the 0.95 band in
+  5.5 ms, a factor of 13.
+- 10 threads buy 2.0 to 2.7×, not 10×.
+- An exhaustive single-thread scan is about 7× faster than RDKit's `BulkTanimotoSimilarity`
+  plus a Python sort of the scores, normalised per million fingerprints. The RDKit side
+  includes the sort and used a 500K subset, so this is a sanity check, not a kernel-to-kernel
+  measurement.
+
+## The baseline this is not measured against
+
+Fast Tanimoto search is not a new idea. The popcount bound used here is the BitBound
+algorithm, and chemfp (Dalke, *Journal of Cheminformatics* 2019,
+[doi:10.1186/s13321-019-0398-8](https://doi.org/10.1186/s13321-019-0398-8)) is its reference
+implementation, published in part to serve as a baseline for new similarity search
+implementations. This repository claims no new algorithm.
+
+RDKit's `BulkTanimotoSimilarity` is a convenience function, not a search engine. The
+comparison that would rank this implementation is against chemfp or FPSim2 on the same
+fingerprints. chemfp reports a k=1000 search over 1.8M 2048-bit ChEMBL Morgan fingerprints at
+27 ms/query with AVX2 popcount. That comparison has not been run here.
+
+Dalke's paper also argues that uncompressed search on modern hardware is limited by memory
+bandwidth rather than by popcount, noting that AVX2 search gains about 10% from prefetching.
+That is a finding about chemfp on his hardware. It has not been measured for this code.
 
 ## Why the billion-fingerprint claim was withdrawn
 
@@ -55,17 +77,27 @@ The original README claimed sub-second top-*k* over a billion 2048-bit fingerpri
 never measured, and this run does not measure it either — ChEMBL supplies 2.85M.
 
 Extrapolating linearly gives roughly 0.9 s, which would just clear a second. That
-extrapolation should not be believed, and the measurements are what show why: the scan is
-**bandwidth-bound with the whole 730 MB index resident in page cache**. A billion 2048-bit
-fingerprints is 256 GB. It could not be resident, every query would fault against storage,
-and the scaling would be governed by the disk rather than by anything in this repository.
+extrapolation should not be believed. Every timing here was taken with the whole 730 MB index
+resident in page cache. A billion 2048-bit fingerprints is 256 GB. It could not be resident,
+every query would fault against storage, and the scaling would be governed by the disk rather
+than by anything in this repository.
 
 Withdrawing beats restating with a caveat. A claim that survives only under an assumption
 the data contradicts is not a weaker claim, it is a wrong one.
 
 ## Where the time actually goes
 
-At 2048 bits a fingerprint is 256 bytes and the kernel does 32 `and` + `count_ones` pairs on
-it — far too little arithmetic to hide the load. That is why more cores help so little, and
-it says what to attack next: move fewer bytes per candidate (a narrower fold, or a
-compressed layout), not add parallelism.
+The measured split is clear at the level of the algorithm. At 0.95 the bound removes 89% of
+the records, and that accounts for a factor of 13 on one thread. Threads add 2.0 to 2.7×.
+
+Below that level it is not known. At 2048 bits a fingerprint is 256 bytes and the kernel does
+32 `and` and `count_ones` pairs on it, which is little arithmetic per byte loaded, so memory
+bandwidth is a plausible limit. So is the machine. The M4 mixes performance and efficiency
+cores, the band is split into equal chunks, and threads are spawned per query. The 10-thread
+run at 0.95 reads about 30 GB/s of fingerprint data. A thread sweep that reports GB/s is the
+next measurement, before choosing between a narrower fold or compressed layout and better
+scheduling.
+
+`count_ones` lowers to a hardware popcount on aarch64. On x86-64 the default target has no
+`popcnt`, so a build there needs `RUSTFLAGS="-C target-cpu=native"` (or `+popcnt`) to get it.
+The benchmarks above were run on aarch64.

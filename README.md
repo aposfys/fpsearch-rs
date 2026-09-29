@@ -1,23 +1,25 @@
 # fpsearch-rs
-Tanimoto similarity search over large binary fingerprint collections.
+Thresholded top-*k* Tanimoto search over binary fingerprints, in Rust.
 
 [![CI](https://github.com/aposfys/fpsearch-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/aposfys/fpsearch-rs/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-Memory-mapped storage, a popcount bound that skips most of the database without
-comparing it, and word-parallel popcount in the inner loop.
+The index is sorted by popcount and memory-mapped. Tanimoto cannot exceed
+`min(|a|,|b|) / max(|a|,|b|)`, so a threshold becomes a contiguous popcount band (the
+BitBound bound) and a query never reads the records outside it.
 
-**A top-10 search over 2,854,800 real ChEMBL molecules at Tanimoto ≥ 0.95 takes
-about 2.6 ms**, skipping 89% of the database untouched. The kernel alone is
-**about 7× faster than RDKit's `BulkTanimotoSimilarity`** on an identical
-exhaustive scan.
+On 2,854,800 ChEMBL 36 molecules (ECFP4, 2048 bits, Apple M4), a top-10 search at
+Tanimoto ≥ 0.95 has a median of **2.6 ms on 10 threads** and 5.5 ms on one. Most of that
+comes from the bound, which skips 89% of the database. One thread takes 71 ms to scan the
+whole index, and 10 threads add a further 2.1× at 0.95.
 
-```
-cargo build --release
+```bash
+pip install rdkit
+curl -O https://ftp.ebi.ac.uk/pub/databases/chembl/ChEMBLdb/releases/chembl_36/chembl_36_chemreps.txt.gz
 python3 tools/chembl_to_fps.py chembl_36_chemreps.txt.gz chembl.fps
 cargo run --release -- build chembl.fps chembl.idx
 cargo run --release -- query chembl.idx <hex> --threshold 0.9 --top-k 10
-cargo test          # 21 tests
+cargo test          # 24 tests
 ```
 
 As a library:
@@ -30,51 +32,20 @@ let (hits, stats) = index.search_parallel(&query, 0.9, 10, 10)?;
 println!("{} hits, {:.1}% pruned", hits.len(), stats.pruned_fraction() * 100.0);
 ```
 
-### How it goes fast
+### What is and is not claimed
 
-1. **Bit-count bound.** Tanimoto cannot exceed `min(|a|,|b|) / max(|a|,|b|)`. The
-   index is sorted by popcount, so a thresholded query touches one contiguous band
-   and skips the rest without a single comparison — 89% of the database at 0.95.
-2. **Word-parallel popcount.** Fingerprints are `u64` words intersected with
-   `count_ones`, one hardware instruction per 64 bits.
-3. **Memory-mapped storage.** The index is mapped, not read, so only the band a
-   query can match is ever paged in.
-4. **No allocation in the hot loop**, and a scan that splits across threads with
-   no shared state.
-
-### The billion-fingerprint claim, withdrawn
-
-An earlier version of this README claimed sub-second top-*k* over a billion
-fingerprints. That was never measured. These timings are bandwidth-bound with a
-730 MB index resident in page cache; a billion 2048-bit fingerprints is 256 GB,
-could not be resident, and would be governed by storage rather than by anything
-here. The claim is withdrawn rather than restated.
-
-### The baseline this is not measured against
-
-Fast Tanimoto search is not a new idea. The popcount bound used here is the **BitBound**
-algorithm, and `chemfp` (Dalke, *Journal of Cheminformatics* 2019) is its reference
-implementation — published, in part, expressly to be "an effective baseline to benchmark new
-similarity search implementations." This repository claims no new algorithm.
-
-Two things follow, and both cut against the numbers above.
-
-**The 7× figure is against the wrong baseline.** RDKit's `BulkTanimotoSimilarity` is a
-convenience function, not a search engine. The comparison a reader should want is against
-chemfp, which reports a k=1000 nearest-neighbour search over 1.8M 2048-bit ChEMBL Morgan
-fingerprints at 27 ms/query, and uses AVX2 popcount. That comparison has not been run here,
-so no claim is made about how this implementation ranks.
-
-**Dalke's analysis contradicts the framing in "How it goes fast".** That section leads with
-word-parallel popcount. chemfp's central finding is that nearly all earlier work wrongly
-assumed intersection popcount was the limiting factor, when uncompressed search on modern
-hardware is **memory-bandwidth limited** — AVX2 search gains 10% from prefetching, and
-popcount evaluation is far cheaper than a random main-memory fetch. The withdrawn
-billion-fingerprint section below reaches the same conclusion independently ("these timings
-are bandwidth-bound"), which is the reading to trust.
+- The bound is BitBound, and chemfp (Dalke 2019) is its reference implementation. No new
+  algorithm is claimed. No comparison against chemfp or FPSim2 has been run, so nothing is
+  claimed about how this ranks against them.
+- As a sanity check, an exhaustive single-thread scan costs 25 ms per million fingerprints,
+  against 177 ms for RDKit's `BulkTanimotoSimilarity` plus the Python sort in
+  `tools/baseline_rdkit.py`. The RDKit figure includes that sort and a smaller subset, so
+  the 7× gap is a rough ratio, not a kernel-to-kernel measurement.
+- Why 10 threads give only 2.0 to 2.7× has not been measured. An earlier claim of sub-second
+  search over a billion fingerprints was never measured and is withdrawn.
 
 ### More
 
-- [Analysis](ANALYSIS.md) — what was done and why it was done that way
-- [Benchmarks](benchmarks/RESULTS.md) — measured results, the baseline comparison, and what the parallel scan is worth
-- [Design](docs/DESIGN.md) — packaging plan, the layout, and the traps this avoids
+- [Analysis](ANALYSIS.md), the reasoning, the withdrawn claim and the missing baseline
+- [Benchmarks](benchmarks/RESULTS.md), every measured number and how it was produced
+- [Design](docs/DESIGN.md), the index layout, the packaging plan and the traps it avoids

@@ -57,7 +57,12 @@ error.
   worth having if it changes cost and nothing else, so `search_agrees_with_a_brute_force_scan`
   compares against an exhaustive scan at five thresholds, and
   `parallel_search_returns_exactly_what_the_serial_one_does` requires the threaded path to
-  match the serial one exactly.
+  match the serial one exactly. Ties at the *k*-th place go to the lower id, so the result
+  does not depend on how the band was split.
+- **Floating-point rounding can shrink the band.** `7 / 0.07` evaluates to just under 100,
+  so a band taken from the float quotient alone drops a record that scores exactly the
+  threshold. `candidate_band` widens until the next popcount out cannot reach it, and
+  `candidate_band_survives_floating_point_rounding` checks every threshold in steps of 0.01.
 - **An unsafe bound loses hits without ever looking slow.** `the_bound_is_never_below_the_true_score`
   is exhaustive over an 8-bit width rather than sampled.
 - **A truncated index should not be read as a short one.** The header carries the record
@@ -66,11 +71,11 @@ error.
 
 ## Where the time actually goes
 
-The scan is bandwidth-bound, not compute-bound: at 2048 bits a fingerprint is 256 bytes and
-the kernel does 32 `and` + `count_ones` pairs on it, far too little arithmetic to hide the
-load. That is why 10 threads buy 2.4–4.3× rather than 10×, and it is the thing to attack
-next — a narrower fold, or a compressed layout that moves fewer bytes per candidate, would
-help where more cores will not.
+At 0.95 the popcount bound accounts for a factor of 13 on one thread, and 10 threads add 2.0
+to 2.7×. Why the thread gain stops there has not been measured. Memory bandwidth is one
+candidate, since at 2048 bits the kernel does 32 `and` and `count_ones` pairs per 256-byte
+fingerprint. Equal chunks on a machine that mixes performance and efficiency cores, and a
+thread spawn per query, are others. See [ANALYSIS.md](../ANALYSIS.md).
 
 ## Layout
 

@@ -1,7 +1,8 @@
 # Benchmark results
 
-Measured 2026-09-01. Every number here came from the commands shown; nothing is estimated
-unless it says so.
+Measured 2026-09-01. Every number here came from the commands shown, and nothing is
+estimated unless it says so. The raw `fpsearch bench` and baseline output was not kept in the
+repository, so the tables below are the only record of it.
 
 ## Setup
 
@@ -43,20 +44,25 @@ measurement.
 | 0.95 | 311,266 | **89.1%** | 5,474 µs | **2,627 µs** | 2.1× |
 | 0.90 | 630,523 | 77.9% | 13,494 µs | **6,749 µs** | 2.0× |
 | 0.80 | 1,270,347 | 55.5% | 38,995 µs | 16,184 µs | 2.4× |
-| 0.70 | 1,841,676 | 35.4% | 55,700 µs | 20,770 µs | 2.7× |
+| 0.70 | 1,841,676 | 35.5% | 55,700 µs | 20,770 µs | 2.7× |
 | 0.00 | 2,854,800 | 0.0% | 71,239 µs | — | — |
 
 **A top-10 similarity search over 2.85 million real molecules at Tanimoto ≥ 0.95 takes about
 2.6 milliseconds.** At ≥ 0.90 it takes about 6.7 ms.
 
+Most of the gain is the popcount bound. On one thread the full scan takes 71,239 µs and the
+0.95 band takes 5,474 µs, a factor of 13. Ten threads then add 2.1× at 0.95.
+
 ## Against the baseline
 
 `DataStructs.BulkTanimotoSimilarity` is what most people reach for. It is already C++ under
-the hood and does no pruning, so this comparison isolates what the layout and the popcount
-bound are worth rather than measuring Python against Rust.
+the hood and does no pruning. It is not the baseline that matters (see
+[ANALYSIS.md](../ANALYSIS.md)), so treat this section as a sanity check.
 
 Both were run back to back on the same machine within the same minute, single-threaded, and
-normalised per million fingerprints so the subset sizes do not matter:
+normalised per million fingerprints. The RDKit time comes from `tools/baseline_rdkit.py`,
+which times `BulkTanimotoSimilarity` together with a Python `sorted()` over every score, on a
+500K subset. The `fpsearch` time is a full scan of the 2.85M index with a top-10 heap.
 
 | | µs per query per 1M fingerprints |
 | --- | ---: |
@@ -64,9 +70,9 @@ normalised per million fingerprints so the subset sizes do not matter:
 | `fpsearch`, full scan, no pruning | **24,954** |
 | `fpsearch`, threshold 0.95, 10 threads | **920** |
 
-**The kernel alone is about 7× faster than RDKit's bulk similarity** on an identical
-exhaustive scan. That is the number that isolates the implementation, and it is the one
-worth quoting.
+The exhaustive scan is about 7× faster than RDKit's bulk similarity plus the sort. The two
+sides are not identical, since the RDKit figure includes a full sort of 500K scores and the
+subset sizes differ, so this is a rough ratio rather than a kernel-to-kernel measurement.
 
 End to end — a thresholded 0.95 search on 10 threads against RDKit's exhaustive scan — the
 ratio is roughly 190×. That figure is real but it compares two different operations, so it
@@ -74,14 +80,15 @@ says more about using a threshold at all than about this code.
 
 ## What the parallel scan is actually worth
 
-10 threads buy 2.0–2.7×, not 10×. The scan is embarrassingly parallel and shares no state
-during the scan, so the ceiling is not synchronisation — it is memory bandwidth. At 2048
-bits a fingerprint is 256 bytes and the kernel does 32 `and` + `count_ones` pairs on it,
-which is far too little arithmetic to hide the load.
+10 threads buy 2.0 to 2.7×, not 10×. The scan shares no state, so synchronisation is not the
+limit. What the limit is has not been measured.
 
-The honest reading: this engine is bandwidth-bound, more cores will not help much, and the
-next real gain is in moving fewer bytes per candidate — a narrower fold, or a compressed
-layout — not in more parallelism.
+An earlier version of this file said the scan is memory-bandwidth bound. No bandwidth or
+thread-count sweep was run to show that. The 10-thread run at 0.95 reads about 30 GB/s of
+fingerprint data (311,266 records of 256 bytes in 2,627 µs). The M4 mixes performance and
+efficiency cores, the band is split into equal chunks, and threads are spawned per query, so
+the slowest core or the spawn cost could set the pace just as well. A sweep over 1 to 10
+threads that reports GB/s would tell these apart.
 
 ## The claim the README used to make
 
@@ -90,11 +97,10 @@ That was never measured, and this run does not measure it either — 2.85M is wh
 supplies, and a billion 2048-bit fingerprints is 256 GB.
 
 Extrapolating the 0.95 figure linearly (×350) gives ~0.9 s, which would just about clear a
-second. **That extrapolation should not be believed**, for a reason the measurement itself
-demonstrates: these timings are bandwidth-bound with the whole 730 MB index resident in page
-cache. At 256 GB the working set cannot be resident, every query would fault against
-storage, and paging would dominate the arithmetic completely. The scaling would be governed
-by the disk, not by anything in this repository.
+second. **That extrapolation should not be believed.** These timings were taken with the
+whole 730 MB index resident in page cache. At 256 GB the working set cannot be resident,
+every query would fault against storage, and the scaling would be governed by the disk, not
+by anything in this repository.
 
 So the claim is withdrawn rather than restated. What is measured is what is above.
 
@@ -106,10 +112,15 @@ rather than assumed:
 - `search_agrees_with_a_brute_force_scan` compares the banded search against an exhaustive
   scan at five thresholds and requires identical hits and identical scores.
 - `parallel_search_returns_exactly_what_the_serial_one_does` runs 1, 2, 4 and 8 threads at
-  three values of *k* and requires the serial result exactly.
+  three values of *k* and requires the serial ids and scores exactly.
+- `ties_at_the_kth_place_do_not_depend_on_thread_count` builds tied scores across two
+  popcounts and requires the same ids at every thread count. A tie goes to the lower id.
+- `a_hit_exactly_at_the_threshold_is_returned` and
+  `candidate_band_survives_floating_point_rounding` cover a band that floating-point rounding
+  used to shrink (7 / 0.07 evaluates to just under 100).
 - `the_bound_is_never_below_the_true_score` is exhaustive over an 8-bit width — an unsafe
   bound silently loses true hits, which is the one failure mode that would not show up as a
   slowdown.
 - `the_band_actually_prunes` fails if the index ever degenerates into a linear scan.
 
-21 tests, `cargo test --release`.
+24 tests, `cargo test --release`.

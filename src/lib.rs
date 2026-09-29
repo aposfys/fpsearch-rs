@@ -1,12 +1,12 @@
 //! Tanimoto similarity over packed binary fingerprints.
 //!
 //! Fingerprints are stored as slices of `u64` words. Intersection and union counts use
-//! `count_ones`, which lowers to a single hardware popcount instruction, so the inner loop
-//! processes 64 bits per step instead of one.
+//! `count_ones`, which lowers to a hardware popcount on aarch64, and on x86-64 when the
+//! build enables `popcnt` (for example with `-C target-cpu=native`).
 //!
-//! The bound in [`max_possible_tanimoto`] is what makes billion-scale search tractable: it
-//! depends only on the two popcounts, so a database sorted by popcount lets a thresholded
-//! query skip whole regions without comparing a single fingerprint.
+//! The bound in [`max_possible_tanimoto`] depends only on the two popcounts, so a database
+//! sorted by popcount lets a thresholded query skip whole regions without comparing a
+//! single fingerprint.
 
 use std::cmp::Ordering;
 

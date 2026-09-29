@@ -1,8 +1,8 @@
-//! Kernel benchmarks. The numbers in the README come from here, on stated hardware.
+//! Kernel microbenchmarks on synthetic fingerprints. The README and RESULTS numbers come
+//! from `fpsearch bench` on the ChEMBL index, not from here.
 //!
-//! Two things are measured separately on purpose: the raw kernel throughput, which is a
-//! memory-bandwidth question, and the effect of the popcount bound, which is an algorithmic
-//! one. Reporting only the combined figure hides which of the two is actually doing the
+//! Two things are measured separately on purpose. One is the raw kernel throughput, the
+//! other is the effect of the popcount bound, which is an algorithmic one. Reporting only the combined figure hides which of the two is actually doing the
 //! work.
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
