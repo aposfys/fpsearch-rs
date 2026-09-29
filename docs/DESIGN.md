@@ -29,8 +29,8 @@ every word, a file written on the other kind of machine is refused.
 The engine is meant to be published, not just posted. None of this is done yet:
 
 - **crates.io** — the Rust library, semver, documented.
-- **PyPI** — `pip install fpsearch`, wheels for macOS (arm64, x86_64) and Linux via maturin
-  in CI, so nobody needs a Rust toolchain.
+- **PyPI**. Python bindings (PyO3) come first, then `pip install fpsearch` with wheels for
+  macOS (arm64, x86_64) and Linux built by maturin in CI, so nobody needs a Rust toolchain.
 - **GitHub Releases** — tagged binaries.
 - **Zenodo** — a DOI, so it is citable from a thesis.
 

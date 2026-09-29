@@ -13,7 +13,7 @@ readme = "README.md"
 
 [lib]
 name = "fpsearch"
-crate-type = ["rlib", "cdylib"]
+crate-type = ["rlib"]
 
 [dependencies]
 memmap2 = "0.9"
