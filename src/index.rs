@@ -479,12 +479,16 @@ impl Index {
             if score < threshold {
                 continue;
             }
+            let hit = Hit { id, score };
             if heap.len() < k {
-                heap.push(std::cmp::Reverse(Hit { id, score }));
+                heap.push(std::cmp::Reverse(hit));
             } else if let Some(std::cmp::Reverse(weakest)) = heap.peek() {
-                if score > weakest.score {
+                // Compare whole hits, not scores, so a tie goes to the lower id. Keeping
+                // whichever tie came first would make the result depend on how the band
+                // was split across threads.
+                if hit > *weakest {
                     heap.pop();
-                    heap.push(std::cmp::Reverse(Hit { id, score }));
+                    heap.push(std::cmp::Reverse(hit));
                 }
             }
         }
@@ -493,11 +497,9 @@ impl Index {
 
     /// Top-`k` search with the candidate band split across `threads` worker threads.
     ///
-    /// The scan is embarrassingly parallel — every candidate is scored independently — and
-    /// the serial version is memory-bandwidth bound well below what the machine can supply,
-    /// so this is close to a linear win. Each worker keeps its own heap and the results are
-    /// merged at the end, which costs `threads * k` and needs no shared state during the
-    /// scan.
+    /// Every candidate is scored independently, so the band is split into equal chunks,
+    /// one per worker. Each worker keeps its own heap and the results are merged at the
+    /// end, which costs `threads * k` and needs no shared state during the scan.
     ///
     /// Uses scoped threads from the standard library; there is no thread-pool dependency.
     pub fn search_parallel(
@@ -725,6 +727,7 @@ mod tests {
                 assert_eq!(s1, s2, "stats differ at {threads} threads");
                 assert_eq!(serial.len(), parallel.len(), "{threads} threads, k={k}");
                 for (a, b) in serial.iter().zip(parallel.iter()) {
+                    assert_eq!(a.id, b.id, "{threads} threads, k={k}");
                     assert!(
                         (a.score - b.score).abs() < 1e-12,
                         "{threads} threads, k={k}: {a:?} vs {b:?}"
@@ -732,6 +735,57 @@ mod tests {
                 }
             }
         }
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn a_hit_exactly_at_the_threshold_is_returned() {
+        // A 100-bit superset of a 7-bit query scores 7/100, which equals the threshold 0.07.
+        let path = temp_path("exact-threshold");
+        let mut builder = IndexBuilder::new(128);
+        builder
+            .push(1, &fingerprint_from_bits(&(0..100).collect::<Vec<_>>(), 2))
+            .unwrap();
+        builder.write(&path).unwrap();
+        let index = Index::open(&path).unwrap();
+
+        let query = fingerprint_from_bits(&(0..7).collect::<Vec<_>>(), 2);
+        let (hits, _) = index.search(&query, 0.07, 10).unwrap();
+        assert_eq!(hits.len(), 1, "the exact-threshold hit was pruned");
+        assert_eq!(hits[0].id, 1);
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn ties_at_the_kth_place_do_not_depend_on_thread_count() {
+        // A 4-bit query scores 0.5 against a 2-bit subset and against an 8-bit superset.
+        // The subsets sort first by popcount but carry the higher ids, so a scan that keeps
+        // whichever tie it met first disagrees with one that splits the band. The lowest
+        // ids must win whatever the thread count.
+        let path = temp_path("ties");
+        let query = fingerprint_from_bits(&[0, 1, 2, 3], 2);
+        let subset = fingerprint_from_bits(&[0, 1], 2);
+        let superset = fingerprint_from_bits(&(0..8).collect::<Vec<_>>(), 2);
+        let mut builder = IndexBuilder::new(128);
+        for id in 1..=10_000u64 {
+            builder.push(id, &superset).unwrap();
+            builder.push(id + 10_000, &subset).unwrap();
+        }
+        builder.write(&path).unwrap();
+        let index = Index::open(&path).unwrap();
+        let expected: Vec<u64> = (1..=10).collect();
+        for &threads in &[1usize, 2, 4, 8] {
+            let (hits, stats) = index.search_parallel(&query, 0.5, 10, threads).unwrap();
+            assert!(
+                stats.examined >= threads * 1024,
+                "{threads} threads ran serially"
+            );
+            let ids: Vec<u64> = hits.iter().map(|hit| hit.id).collect();
+            assert_eq!(ids, expected, "{threads} threads");
+        }
+        let (serial, _) = index.search(&query, 0.5, 10).unwrap();
+        let ids: Vec<u64> = serial.iter().map(|hit| hit.id).collect();
+        assert_eq!(ids, expected, "serial");
         std::fs::remove_file(&path).ok();
     }
 

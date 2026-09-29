@@ -83,8 +83,18 @@ pub fn candidate_band(query_popcount: u32, threshold: f64) -> (u32, u32) {
     if threshold <= 0.0 {
         return (0, u32::MAX);
     }
-    let low = (f64::from(query_popcount) * threshold).ceil() as u32;
-    let high = (f64::from(query_popcount) / threshold).floor() as u32;
+    let query = f64::from(query_popcount);
+    let mut low = (query * threshold).ceil() as u32;
+    let mut high = (query / threshold).floor() as u32;
+    // The float product and quotient can round one popcount inside the true band (7 / 0.07
+    // is just under 100), so widen until the next popcount out cannot reach the threshold.
+    // The bound uses the same division as the score, so the two agree exactly.
+    while low > 0 && max_possible_tanimoto(low - 1, query_popcount) >= threshold {
+        low -= 1;
+    }
+    while high < u32::MAX && max_possible_tanimoto(high + 1, query_popcount) >= threshold {
+        high += 1;
+    }
     (low, high)
 }
 
@@ -174,6 +184,29 @@ mod tests {
                     other >= low && other <= high,
                     "band excluded popcount {other}"
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn candidate_band_survives_floating_point_rounding() {
+        // 7 / 0.07 evaluates to just under 100, so a band computed from the float quotient
+        // alone would drop a popcount-100 record that scores exactly 0.07.
+        let (low, high) = candidate_band(7, 0.07);
+        assert!(low <= 7 && high >= 100, "band [{low}, {high}] excludes 100");
+
+        for step in 1..=100u32 {
+            let threshold = f64::from(step) / 100.0;
+            for query in 1u32..=256 {
+                let (low, high) = candidate_band(query, threshold);
+                for other in 0u32..=1024 {
+                    if max_possible_tanimoto(query, other) >= threshold {
+                        assert!(
+                            other >= low && other <= high,
+                            "t={threshold} q={query}: band [{low}, {high}] excluded {other}"
+                        );
+                    }
+                }
             }
         }
     }
